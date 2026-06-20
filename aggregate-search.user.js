@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
 // @description  整合DuckDuckGo、Bing、Google，支持自动翻页、暗色模式、置顶
-// @version      1.0.1
+// @version      1.0
 // @author       jbaoyin
 // @license      MIT
 // @match        *://duckduckgo.com/*
