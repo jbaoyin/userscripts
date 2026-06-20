@@ -11,7 +11,6 @@
 // @grant        none
 // @downloadURL  https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
 // @updateURL    https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
-
 // ==/UserScript==
 
 !(function () {
