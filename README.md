@@ -12,8 +12,6 @@
 
 ## 安装
 
-先装 [脚本猫 ScriptCat](https://scriptcat.org/) 浏览器插件，然后点击安装：
-
 👉 [点击安装](https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js)
 
 ## 使用说明
