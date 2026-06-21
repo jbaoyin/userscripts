@@ -10,8 +10,8 @@
 // @match        *://www.google.com.hk/search*
 // @match        *://www.google.com/search*
 // @grant        none
-// @downloadURL  https://raw.githubusercontent.com/jbaoyin/aggregate-search/main/aggregate-search.user.js
-// @updateURL    https://raw.githubusercontent.com/jbaoyin/aggregate-search/main/aggregate-search.user.js
+// @downloadURL  https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
+// @updateURL    https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
 // ==/UserScript==
 
 !(function () {
