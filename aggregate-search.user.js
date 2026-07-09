@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
 // @description  整合 DuckDuckGo、Bing、Google 的悬浮搜索工具栏，支持引擎切换、自动翻页、深色模式、一键回顶。
-// @version      1.0.0
+// @version      1.0.1
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
