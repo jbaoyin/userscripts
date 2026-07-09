@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
-// @description  整合DuckDuckGo、Bing、Google，支持自动翻页、暗色模式、置顶
-// @version      1.0.1
+// @description  整合 DuckDuckGo、Bing、Google 的悬浮搜索工具栏，支持引擎切换、自动翻页、深色模式、一键回顶。
+// @version      1.0.0
 // @author       jbaoyin
-// @website      https://github.com/jbaoyin/aggregate-search
+// @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
 // @match        *://duckduckgo.com/*
 // @match        *://cn.bing.com/search*
 // @match        *://www.google.com.hk/search*
 // @match        *://www.google.com/search*
 // @grant        none
-// @downloadURL  https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
-// @updateURL    https://github.com/jbaoyin/aggregate-search/raw/refs/heads/main/aggregate-search.user.js
+// @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
+// @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
 // ==/UserScript==
 
 !(function () {
