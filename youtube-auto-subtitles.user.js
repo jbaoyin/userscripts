@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         📺 YouTube自动字幕
-// @description  自动开启YouTube字幕，优先匹配中文（无官方字幕则走自动翻译）
+// @description  自动开启YouTube中文字幕
 // @version      1.0.0
 // @author       jbaoyin
-// @website      https://github.com/jbaoyin/userscripts
+// @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
 // @match        https://www.youtube.com/*
 // @grant        none
+// @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
+// @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // ==/UserScript==
 
 !(function () {
