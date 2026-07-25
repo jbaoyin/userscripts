@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
-// @description  整合 DuckDuckGo、Bing、Google 的悬浮搜索工具栏，支持引擎切换、自动翻页、深色模式、一键回顶。
-// @version      1.0.1
+// @description  整合 DuckDuckGo、Bing、Google、Brave 的悬浮搜索工具栏，支持引擎切换、自动翻页、深色模式、一键回顶。
+// @version      1.1.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
@@ -9,6 +9,7 @@
 // @match        *://cn.bing.com/search*
 // @match        *://www.google.com.hk/search*
 // @match        *://www.google.com/search*
+// @match        *://search.brave.com/search*
 // @grant        none
 // @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
 // @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
@@ -24,6 +25,7 @@
         test: /duckduckgo\.com/,
         pageParam: "s",
         pageStep: 50,
+        pageBase: 0,
         auto: !1,
       },
       {
@@ -33,6 +35,7 @@
         test: /bing\.com/,
         pageParam: "first",
         pageStep: 10,
+        pageBase: 0,
         auto: !0,
       },
       {
@@ -42,10 +45,21 @@
         test: /google\.com/,
         pageParam: "start",
         pageStep: 10,
+        pageBase: 0,
+        auto: !0,
+      },
+      {
+        name: "Brave",
+        url: "https://search.brave.com/search?q=",
+        param: "q",
+        test: /search\.brave\.com/,
+        pageParam: "offset",
+        pageStep: 1,
+        pageBase: -1,
         auto: !0,
       },
     ],
-    t = [".results", "#b_results", "#search"],
+    t = [".results", "#b_results", "#search", "#results"],
     n = "sa_pos",
     r = "sa_auto",
     s = e.find((e) => e.test.test(location.href));
@@ -129,7 +143,10 @@
                 ((d = !0), i++, u(`⏳ 正在加载第 ${i} 页...`));
                 try {
                   const e = new URL(location.href);
-                  e.searchParams.set(s.pageParam, (i * s.pageStep).toString());
+                  e.searchParams.set(
+                    s.pageParam,
+                    (i * s.pageStep + (s.pageBase || 0)).toString(),
+                  );
                   const t = await fetch(e, {
                     headers: { Accept: "text/html" },
                   });
