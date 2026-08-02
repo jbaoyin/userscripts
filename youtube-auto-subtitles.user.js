@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📺 YouTube自动字幕
 // @description  自动开启YouTube中文字幕
-// @version      1.1.0
+// @version      1.2.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
@@ -16,26 +16,19 @@
 !(function () {
   "use strict";
 
-  // 字幕语言固定为中文，不做自定义
-  const LANG_KEYWORDS = ["中文(简体)", "中文（简体）", "简体中文", "Chinese (Simplified)"];
-
-  // 沉浸式翻译的检测特征字符串。如果以后插件改了命名规则导致检测失效，
-  // 用F12在页面元素里找到它新的class/id特征词，通过下面的菜单命令改这个值即可，不用改源码。
+  const LANG_KEYWORDS = ["中文(简体)", "中文（简体）", "简体中文", "chinese(simplified)", "zh-hans"];
   let fingerprint = GM_getValue("imtFingerprint", "immersive-translate");
 
-  GM_registerMenuCommand("✏️ 设置沉浸式翻译特征字符串（检测失效时用）", () => {
-    const input = prompt(
-      "输入沉浸式翻译的class/id特征字符串（F12检查页面元素获取）：",
-      fingerprint
-    );
+  GM_registerMenuCommand("✏️ 设置沉浸式翻译特征字符串", () => {
+    const input = prompt("输入沉浸式翻译的class/id特征字符串：", fingerprint);
     if (input !== null && input.trim()) {
       fingerprint = input.trim();
       GM_setValue("imtFingerprint", fingerprint);
-      alert("已保存，刷新YouTube页面后生效");
+      alert("已保存，刷新页面后生效");
     }
   });
 
-  // ---------- 页面内提示 ----------
+  // ---------- Toast提示 ----------
   function showToast(text, duration = 3000) {
     const toast = document.createElement("div");
     toast.textContent = text;
@@ -50,8 +43,8 @@
     }, duration);
   }
 
-  // ---------- 核心逻辑 ----------
-  const norm = (e) => e.replace(/\s/g, "").replace(/（/g, "(").replace(/）/g, ")");
+  // ---------- 工具函数 ----------
+  const norm = (s) => s.replace(/[\s\u00A0\u200B]/g, "").replace(/（/g, "(").replace(/）/g, ")").toLowerCase();
   const findItem = (keys) => {
     const items = document.querySelectorAll(".ytp-menuitem");
     return Array.from(items).find((e) => {
@@ -59,59 +52,101 @@
       return keys.some((k) => t.includes(norm(k)));
     });
   };
-  const clickCC = () => {
-    const e = document.querySelector(".ytp-subtitles-button");
-    e && "false" === e.getAttribute("aria-pressed") && e.click();
-  };
 
+  // 条件轮询：等待元素出现或超时
+  function waitFor(selectorOrFn, timeout = 3000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        const el = typeof selectorOrFn === "function" ? selectorOrFn() : document.querySelector(selectorOrFn);
+        if (el) return resolve(el);
+        if (Date.now() - start > timeout) return resolve(null);
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+  }
+
+  // ---------- 核心逻辑 ----------
   const hasImmersiveTranslate = () =>
     !!document.querySelector(`[class*="${fingerprint}" i], [id*="${fingerprint}" i]`);
 
-  const selectLanguage = () => {
+  const clickCC = async () => {
+    const btn = document.querySelector(".ytp-subtitles-button");
+    if (btn && btn.getAttribute("aria-pressed") === "false") btn.click();
+  };
+
+  const selectLanguage = async () => {
     const settingsBtn = document.querySelector(".ytp-settings-button");
-    if (!settingsBtn) return;
-    const close = () => settingsBtn.click();
+    if (!settingsBtn) return false;
 
     settingsBtn.click();
-    setTimeout(() => {
-      const subtitleItem = findItem(["字幕", "Subtitles", "CC"]);
-      if (!subtitleItem) return close();
-      subtitleItem.click();
+    const subtitleItem = await waitFor(() => findItem(["字幕", "subtitles", "cc"]));
+    if (!subtitleItem) { settingsBtn.click(); return false; }
+    subtitleItem.click();
 
-      setTimeout(() => {
-        const direct = findItem(LANG_KEYWORDS);
-        if (direct) return direct.click();
+    // 优先查找原生简中
+    const direct = await waitFor(() => findItem(LANG_KEYWORDS), 2000);
+    if (direct) {
+      direct.click();
+      showToast("✅ 已开启：中文(简体) [原生]");
+      return true;
+    }
 
-        const autoTranslate = findItem(["自动翻译", "Auto-translate"]);
-        if (!autoTranslate) return close();
-        autoTranslate.click();
+    // 尝试自动翻译路径
+    const autoTranslate = await waitFor(() => findItem(["自动翻译", "auto-translate"]), 2000);
+    if (!autoTranslate) { settingsBtn.click(); return false; }
+    autoTranslate.click();
 
-        setTimeout(() => {
-          const translated = findItem(LANG_KEYWORDS);
-          translated ? translated.click() : close();
-        }, 400);
-      }, 400);
-    }, 300);
+    const translated = await waitFor(() => findItem(LANG_KEYWORDS), 3000);
+    if (translated) {
+      translated.click();
+      showToast("✅ 已开启：中文(简体) [自动翻译]");
+      return true;
+    }
+
+    // 翻译路径也失败，保留CC开启状态
+    settingsBtn.click();
+    showToast("⚠️ 未找到中文简体，已保留原始字幕");
+    return false;
   };
 
-  const tryEnable = () => {
+  // 视频ID提取与缓存
+  const getVideoId = () => new URLSearchParams(location.search).get("v");
+  const processedVideos = new Set();
+
+  const tryEnable = async () => {
     if (!document.querySelector(".html5-video-player")) return;
-    setTimeout(() => {
-      clickCC();
-      setTimeout(() => {
-        if (hasImmersiveTranslate()) {
-          showToast("检测到沉浸式翻译已启用，默认不选择自动翻译");
-        } else {
-          selectLanguage();
-        }
-      }, 800);
-    }, 1000);
+    const vid = getVideoId();
+    if (vid && processedVideos.has(vid)) return;
+
+    await new Promise((r) => setTimeout(r, 800)); // 等待播放器初始化
+
+    if (hasImmersiveTranslate()) {
+      showToast("ℹ️ 检测到沉浸式翻译，跳过原生字幕选择");
+      if (vid) processedVideos.add(vid);
+      return;
+    }
+
+    await clickCC();
+    const success = await selectLanguage();
+    if (vid && success) processedVideos.add(vid);
   };
 
+  // ---------- 事件监听 ----------
   window.addEventListener("load", tryEnable);
+
+  // 优先使用YouTube内部导航事件，回退到MutationObserver
   let lastUrl = location.href;
-  new MutationObserver(() => {
-    location.href !== lastUrl &&
-      ((lastUrl = location.href), setTimeout(tryEnable, 1500));
-  }).observe(document, { subtree: true, childList: true });
+  const onNavigate = () => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      setTimeout(tryEnable, 1000);
+    }
+  };
+
+  if ("onYTNavigateFinish" in window || document.addEventListener) {
+    document.addEventListener("yt-navigate-finish", onNavigate);
+  }
+  new MutationObserver(onNavigate).observe(document, { subtree: true, childList: true });
 })();
