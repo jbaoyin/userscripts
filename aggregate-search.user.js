@@ -1,12 +1,11 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
-// @description  整合 DuckDuckGo、Bing、Google、Brave 的悬浮搜索工具栏，支持引擎切换、自动翻页、深色模式、一键回顶。
-// @version      1.1.0
+// @description  Brave/DDG/Google 悬浮工具栏：支持引擎切换、自动翻页、深色模式、一键回顶。
+// @version      1.3.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
 // @match        *://duckduckgo.com/*
-// @match        *://cn.bing.com/search*
 // @match        *://www.google.com.hk/search*
 // @match        *://www.google.com/search*
 // @match        *://search.brave.com/search*
@@ -17,273 +16,297 @@
 
 !(function () {
   "use strict";
-  const e = [
-      {
-        name: "DDG",
-        url: "https://duckduckgo.com/?q=",
-        param: "q",
-        test: /duckduckgo\.com/,
-        pageParam: "s",
-        pageStep: 50,
-        pageBase: 0,
-        auto: !1,
-      },
-      {
-        name: "Bing",
-        url: "https://cn.bing.com/search?q=",
-        param: "q",
-        test: /bing\.com/,
-        pageParam: "first",
-        pageStep: 10,
-        pageBase: 0,
-        auto: !0,
-      },
-      {
-        name: "Google",
-        url: "https://www.google.com/search?q=",
-        param: "q",
-        test: /google\.com/,
-        pageParam: "start",
-        pageStep: 10,
-        pageBase: 0,
-        auto: !0,
-      },
-      {
-        name: "Brave",
-        url: "https://search.brave.com/search?q=",
-        param: "q",
-        test: /search\.brave\.com/,
-        pageParam: "offset",
-        pageStep: 1,
-        pageBase: -1,
-        auto: !0,
-      },
-    ],
-    t = [".results", "#b_results", "#search", "#results"],
-    n = "sa_pos",
-    r = "sa_auto",
-    s = e.find((e) => e.test.test(location.href));
-  if (!s) return;
-  const a = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  let c = "false" !== localStorage.getItem(r),
-    i = 1,
-    d = !1;
-  const p = a
-    ? {
-        bg: "#2d2d2d",
-        bg2: "#3a3a3a",
-        bgOn: "#2d4a2d",
-        bd: "#555",
-        tx: "#e0e0e0",
-        tx2: "#b0b0b0",
-        on: "#4CAF50",
-        hv: "#3a3a3a",
-        sh: "rgba(0,0,0,.3)",
-      }
-    : {
-        bg: "#fff",
-        bg2: "#f5f5f5",
-        bgOn: "#e8f5e8",
-        bd: "#e0e0e0",
-        tx: "#333",
-        tx2: "#666",
-        on: "#4CAF50",
-        hv: "#f9f9f9",
-        sh: "rgba(0,0,0,.1)",
-      };
-  function m(e = document) {
-    for (const o of t) {
-      const t = e.querySelector(o);
-      if (t) return t;
+
+  const ENGINES = [
+    { name: "Brave", url: "https://search.brave.com/search?q=", param: "q", test: /search\.brave\.com/, pageParam: "offset", pageStep: 1, pageBase: -1, auto: !0, icon: "🦁", color: "#4CAF50" },
+    { name: "DDG", url: "https://duckduckgo.com/?q=", param: "q", test: /duckduckgo\.com/, pageParam: "s", pageStep: 50, pageBase: 0, auto: !1, icon: "🦆", color: "#FF9800" },
+    { name: "Google", url: "https://www.google.com/search?q=", param: "q", test: /google\.com/, pageParam: "start", pageStep: 10, pageBase: 0, auto: !0, icon: "🔍", color: "#2196F3" }
+  ];
+  const RESULT_SELECTORS = ["#results", ".results", "#search"];
+  const STORAGE_KEY_POS = "sa_pos";
+  const STORAGE_KEY_AUTO = "sa_auto";
+  const FETCH_TIMEOUT = 8000;
+  const MAX_FAIL_COUNT = 2;
+
+  const currentEngine = ENGINES.find(e => e.test.test(location.href));
+  if (!currentEngine) return;
+
+  const isDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  let autoPageEnabled = "false" !== localStorage.getItem(STORAGE_KEY_AUTO);
+  let currentPage = 1;
+  let isLoading = false;
+  let failCount = 0;
+  let cleanupFns = [];
+
+  const theme = isDark
+    ? { bg: "#2d2d2d", bg2: "#3a3a3a", bgOn: "#2d4a2d", bd: "#555", tx: "#e0e0e0", tx2: "#b0b0b0", hv: "#3a3a3a", sh: "rgba(0,0,0,.3)" }
+    : { bg: "#fff", bg2: "#f5f5f5", bgOn: "#e8f5e8", bd: "#e0e0e0", tx: "#333", tx2: "#666", hv: "#f9f9f9", sh: "rgba(0,0,0,.1)" };
+
+  function getResultsContainer(doc = document) {
+    for (const sel of RESULT_SELECTORS) {
+      const el = doc.querySelector(sel);
+      if (el) return el;
     }
     return null;
   }
-  function u(e, t = 1500) {
-    let o = document.getElementById("sa-tip");
-    (o ||
-      ((o = document.createElement("div")),
-      (o.id = "sa-tip"),
-      (o.style.cssText =
-        "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.85);color:#fff;padding:14px 24px;border-radius:10px;font-size:14px;z-index:100000;pointer-events:none;display:none"),
-      document.body.appendChild(o)),
-      (o.textContent = e),
-      (o.style.display = "block"),
-      clearTimeout(o._t),
-      (o._t = setTimeout(() => {
-        o.style.display = "none";
-      }, t)));
+
+  function showToast(msg, duration = 1500) {
+    let tip = document.getElementById("sa-tip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.id = "sa-tip";
+      tip.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.85);color:#fff;padding:14px 24px;border-radius:10px;font-size:14px;z-index:100000;pointer-events:none;display:none;transition:opacity .3s";
+      document.body.appendChild(tip);
+    }
+    tip.textContent = msg;
+    tip.style.display = "block";
+    tip.style.opacity = "1";
+    clearTimeout(tip._timer);
+    tip._timer = setTimeout(() => {
+      tip.style.opacity = "0";
+      setTimeout(() => tip.style.display = "none", 300);
+    }, duration);
   }
-  function f() {
-    const e = document.createElement("div");
-    ((e.style.cssText =
-      "position:fixed;bottom:80px;right:30px;width:48px;height:48px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-radius:50%;text-align:center;line-height:48px;font-size:22px;cursor:pointer;display:none;z-index:99998;box-shadow:0 4px 12px rgba(102,126,234,.4);transition:transform .2s"),
-      (e.textContent = "⬆"),
-      (e.onmouseover = () =>
-        (e.style.transform = "translateY(-4px) scale(1.1)")),
-      (e.onmouseout = () => (e.style.transform = "")),
-      (e.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" })),
-      document.body.appendChild(e));
-    const t = (function () {
-      let j = 0,
-        k = null;
+
+  async function safeFetch(url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    const randomDelay = 1500 + Math.random() * 1500;
+    await new Promise(r => setTimeout(r, randomDelay));
+    try {
+      const res = await fetch(url, { signal: controller.signal, headers: { Accept: "text/html" } });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.text();
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
+  }
+
+  function sanitizeNodes(container) {
+    const dangerous = container.querySelectorAll("script, iframe, object, embed, form");
+    dangerous.forEach(el => el.remove());
+    return container;
+  }
+
+  function updateStatusIndicator(bar) {
+    let indicator = bar.querySelector("#sa-status");
+    if (!indicator) {
+      indicator = document.createElement("div");
+      indicator.id = "sa-status";
+      indicator.style.cssText = `height:3px;width:100%;border-radius:12px 12px 0 0;transition:background .3s`;
+      bar.insertBefore(indicator, bar.firstChild);
+    }
+    indicator.style.background = `linear-gradient(90deg, ${currentEngine.color}, ${currentEngine.color}88)`;
+    const titleEl = bar.querySelector("#sa-title");
+    if (titleEl) titleEl.innerHTML = `<span style="margin-right:4px">${currentEngine.icon}</span>聚合搜索`;
+  }
+
+  function highlightFallback(bar) {
+    const btns = bar.querySelectorAll("[data-engine]");
+    btns.forEach(btn => {
+      if (failCount >= MAX_FAIL_COUNT && btn.dataset.engine !== currentEngine.name) {
+        btn.style.animation = "sa-pulse 1.5s infinite";
+      } else {
+        btn.style.animation = "";
+      }
+    });
+  }
+
+  function initBackToTop() {
+    const btn = document.createElement("div");
+    btn.style.cssText = "position:fixed;bottom:80px;right:30px;width:48px;height:48px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-radius:50%;text-align:center;line-height:48px;font-size:22px;cursor:pointer;display:none;z-index:99998;box-shadow:0 4px 12px rgba(102,126,234,.4);transition:transform .2s";
+    btn.textContent = "⬆";
+    btn.onmouseover = () => btn.style.transform = "translateY(-4px) scale(1.1)";
+    btn.onmouseout = () => btn.style.transform = "";
+    btn.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+    document.body.appendChild(btn);
+
+    const onScroll = (() => {
+      let lastTime = 0, timer = null;
       const run = () => {
-        ((j = Date.now()), (k = null));
-        const t = window.scrollY,
-          o = window.innerHeight,
-          n = document.documentElement.scrollHeight;
-        ((e.style.display = t > 300 ? "block" : "none"),
-          t >= 100 &&
-            c &&
-            s.auto &&
-            !d &&
-            i < 10 &&
-            t + o >= n - 300 &&
-            (async function () {
-              if (!(i >= 10 || d)) {
-                ((d = !0), i++, u(`⏳ 正在加载第 ${i} 页...`));
-                try {
-                  const e = new URL(location.href);
-                  e.searchParams.set(
-                    s.pageParam,
-                    (i * s.pageStep + (s.pageBase || 0)).toString(),
-                  );
-                  const t = await fetch(e, {
-                    headers: { Accept: "text/html" },
-                  });
-                  if (!t.ok) throw 0;
-                  const o = m(
-                      new DOMParser().parseFromString(
-                        await t.text(),
-                        "text/html",
-                      ),
-                    ),
-                    n = m();
-                  if (o && n) {
-                    const e = document.createElement("div");
-                    ((e.textContent = `━━━ 第 ${i} 页 ━━━`),
-                      (e.style.cssText = `margin:28px 0;padding:11px;text-align:center;background:${p.bg2};color:${p.tx};border-radius:8px;font-weight:bold`),
-                      n.appendChild(e),
-                      Array.from(o.children).forEach((e) => {
-                        e.classList.contains("page") || n.appendChild(e);
-                      }));
-                  }
-                  const r = document.getElementById("sa-pg");
-                  r && (r.textContent = `📄 第 ${i} 页`);
-                } catch {
-                  (u("❌ 翻页失败"), i--);
-                } finally {
-                  d = !1;
-                }
-              }
-            })());
+        lastTime = Date.now();
+        timer = null;
+        const scrollY = window.scrollY;
+        const winH = window.innerHeight;
+        const docH = document.documentElement.scrollHeight;
+        btn.style.display = scrollY > 300 ? "block" : "none";
+        if (scrollY >= 100 && autoPageEnabled && currentEngine.auto && !isLoading && currentPage < 10 && scrollY + winH >= docH - 300) {
+          loadNextPage();
+        }
       };
       return () => {
-        const n = Date.now(),
-          rem = 300 - (n - j);
-        rem <= 0
-          ? (clearTimeout(k), (k = null), run())
-          : k || (k = setTimeout(run, rem));
+        const now = Date.now();
+        const remaining = 300 - (now - lastTime);
+        if (remaining <= 0) {
+          clearTimeout(timer);
+          timer = null;
+          run();
+        } else if (!timer) {
+          timer = setTimeout(run, remaining);
+        }
       };
     })();
-    (window.addEventListener("scroll", t, { passive: !0 }),
-      new ResizeObserver(() => {
-        window.scrollY >= 100 && t();
-      }).observe(document.documentElement));
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(() => { if (window.scrollY >= 100) onScroll(); });
+    ro.observe(document.documentElement);
+    cleanupFns.push(() => {
+      window.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    });
   }
-  window
-    .matchMedia?.("(prefers-color-scheme: dark)")
-    .addEventListener("change", () => location.reload());
-  const h = document.createElement("style");
-  function b() {
-    (!(function () {
-      const t = document.createElement("div");
-      t.id = "sa-bar";
-      const o = (() => {
-        try {
-          return JSON.parse(localStorage.getItem(n));
-        } catch {
-          return null;
-        }
-      })();
-      t.style.cssText = `position:fixed;${o ? `left:${o.x}px;top:${o.y}px` : "left:10px;top:50%;transform:translateY(-50%)"};width:118px;background:${p.bg};border:1px solid ${p.bd};border-radius:12px;font-size:12px;z-index:99999;box-shadow:0 6px 16px ${p.sh};font-family:system-ui,Arial,sans-serif`;
-      const a = document.createElement("div");
-      ((a.style.cssText = `text-align:center;padding:11px 0;border-bottom:1px solid ${p.bd};cursor:move`),
-        (a.innerHTML = `<div style="font-size:14px;font-weight:bold;color:${p.tx}">🔍 聚合搜索</div><div style="font-size:10px;color:${p.tx2}">by jbaoyin</div>`),
-        t.appendChild(a),
-        e.forEach((e) => {
-          const o = document.createElement("div");
-          o.textContent = e.name;
-          const n = e.name === s.name;
-          ((o.style.cssText = `padding:9px 0;text-align:center;cursor:pointer;border-top:1px solid ${p.bd};color:${n ? "#fff" : p.tx};background:${n ? p.on : ""};font-weight:${n ? "bold" : "normal"};transition:background .15s`),
-            n ||
-              ((o.onmouseover = () => (o.style.background = p.hv)),
-              (o.onmouseout = () => (o.style.background = "")),
-              (o.onclick = () => {
-                const t =
-                  new URLSearchParams(location.search).get(s.param) || "";
-                t &&
-                  (u("跳转中..."),
-                  setTimeout(() => {
-                    location.href = e.url + encodeURIComponent(t);
-                  }, 250));
-              })),
-            t.appendChild(o));
-        }));
-      const i = document.createElement("div"),
-        d = () => {
-          ((i.innerHTML = `🔄 翻页: <b>${c ? "ON" : "OFF"}</b>`),
-            (i.style.background = c ? p.bgOn : p.bg2));
-        };
-      ((i.style.cssText = `padding:9px;text-align:center;cursor:pointer;border-top:1px solid ${p.bd};color:${p.tx};user-select:none`),
-        d(),
-        (i.onclick = () => {
-          ((c = !c), localStorage.setItem(r, c), d());
-        }),
-        s.auto && t.appendChild(i));
-      const m = document.createElement("div");
-      ((m.id = "sa-pg"),
-        (m.style.cssText = `padding:7px;text-align:center;font-size:10px;color:${p.tx2};border-top:1px solid ${p.bd}`),
-        (m.textContent = "📄 第 1 页"),
-        t.appendChild(m));
-      let x,
-        f,
-        h,
-        b,
-        y = !1;
-      ((a.onmousedown = (e) => {
-        ((y = !0), (x = e.clientX), (f = e.clientY));
-        const o = t.getBoundingClientRect();
-        ((h = o.left),
-          (b = o.top),
-          (t.style.transform = "none"),
-          e.preventDefault());
-      }),
-        document.addEventListener("mousemove", (e) => {
-          y &&
-            ((t.style.left = h + e.clientX - x + "px"),
-            (t.style.top = b + e.clientY - f + "px"));
-        }),
-        document.addEventListener("mouseup", () => {
-          if (y) {
-            y = !1;
-            try {
-              localStorage.setItem(
-                n,
-                JSON.stringify({
-                  x: parseInt(t.style.left),
-                  y: parseInt(t.style.top),
-                }),
-              );
-            } catch {}
+
+  async function loadNextPage() {
+    if (isLoading || currentPage >= 10) return;
+    isLoading = true;
+    currentPage++;
+    showToast(`⏳ 正在加载第 ${currentPage} 页...`);
+    try {
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set(currentEngine.pageParam, (currentPage * currentEngine.pageStep + (currentEngine.pageBase || 0)).toString());
+      const html = await safeFetch(nextUrl.toString());
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+      const newResults = getResultsContainer(doc);
+      const curResults = getResultsContainer();
+      if (newResults && curResults) {
+        const sanitized = sanitizeNodes(newResults);
+        const divider = document.createElement("div");
+        divider.textContent = `━━━ 第 ${currentPage} 页 ━━━`;
+        divider.style.cssText = `margin:28px 0;padding:11px;text-align:center;background:${theme.bg2};color:${theme.tx};border-radius:8px;font-weight:bold`;
+        curResults.appendChild(divider);
+        Array.from(sanitized.children).forEach(child => {
+          if (!child.classList.contains("page")) curResults.appendChild(child);
+        });
+      }
+      const pgEl = document.getElementById("sa-pg");
+      if (pgEl) pgEl.textContent = `📄 第 ${currentPage} 页`;
+      failCount = 0;
+      highlightFallback(document.getElementById("sa-bar"));
+    } catch {
+      showToast("❌ 翻页失败");
+      currentPage--;
+      failCount++;
+      if (failCount >= MAX_FAIL_COUNT) {
+        showToast(`⚠️ ${currentEngine.name} 连续受限，建议切换引擎`, 3000);
+        highlightFallback(document.getElementById("sa-bar"));
+      }
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  function initBar() {
+    const bar = document.createElement("div");
+    bar.id = "sa-bar";
+    const savedPos = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY_POS)); } catch { return null; } })();
+    bar.style.cssText = `position:fixed;${savedPos ? `left:${savedPos.x}px;top:${savedPos.y}px` : "left:10px;top:50%;transform:translateY(-50%)"};width:118px;background:${theme.bg};border:1px solid ${theme.bd};border-radius:12px;font-size:12px;z-index:99999;box-shadow:0 6px 16px ${theme.sh};font-family:system-ui,Arial,sans-serif;overflow:hidden`;
+
+    const header = document.createElement("div");
+    header.id = "sa-header";
+    header.style.cssText = `text-align:center;padding:11px 0;border-bottom:1px solid ${theme.bd};cursor:move`;
+    header.innerHTML = `<div id="sa-title" style="font-size:14px;font-weight:bold;color:${theme.tx}"><span style="margin-right:4px">${currentEngine.icon}</span>聚合搜索</div><div style="font-size:10px;color:${theme.tx2}">by jbaoyin</div>`;
+    bar.appendChild(header);
+
+    ENGINES.forEach(eng => {
+      const btn = document.createElement("div");
+      btn.dataset.engine = eng.name;
+      btn.textContent = eng.name;
+      const isActive = eng.name === currentEngine.name;
+      btn.style.cssText = `padding:9px 0;text-align:center;cursor:pointer;border-top:1px solid ${theme.bd};color:${isActive ? "#fff" : theme.tx};background:${isActive ? eng.color : ""};font-weight:${isActive ? "bold" : "normal"};transition:background .15s`;
+      if (!isActive) {
+        btn.onmouseover = () => btn.style.background = theme.hv;
+        btn.onmouseout = () => btn.style.background = "";
+        btn.onclick = () => {
+          const q = new URLSearchParams(location.search).get(currentEngine.param) || "";
+          if (q) {
+            showToast("跳转中...");
+            failCount = 0;
+            setTimeout(() => location.href = eng.url + encodeURIComponent(q), 250);
           }
-        }),
-        document.body.appendChild(t));
-    })(),
-      f());
+        };
+      }
+      bar.appendChild(btn);
+    });
+
+    if (currentEngine.auto) {
+      const toggleBtn = document.createElement("div");
+      const updateToggle = () => {
+        toggleBtn.innerHTML = `🔄 翻页: <b>${autoPageEnabled ? "ON" : "OFF"}</b>`;
+        toggleBtn.style.background = autoPageEnabled ? theme.bgOn : theme.bg2;
+      };
+      toggleBtn.style.cssText = `padding:9px;text-align:center;cursor:pointer;border-top:1px solid ${theme.bd};color:${theme.tx};user-select:none`;
+      updateToggle();
+      toggleBtn.onclick = () => {
+        autoPageEnabled = !autoPageEnabled;
+        localStorage.setItem(STORAGE_KEY_AUTO, autoPageEnabled);
+        updateToggle();
+      };
+      bar.appendChild(toggleBtn);
+    }
+
+    const pgInfo = document.createElement("div");
+    pgInfo.id = "sa-pg";
+    pgInfo.style.cssText = `padding:7px;text-align:center;font-size:10px;color:${theme.tx2};border-top:1px solid ${theme.bd}`;
+    pgInfo.textContent = "📄 第 1 页";
+    bar.appendChild(pgInfo);
+
+    updateStatusIndicator(bar);
+
+    // 拖拽逻辑
+    let isDragging = false, startX, startY, origLeft, origTop;
+    header.onmousedown = (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = bar.getBoundingClientRect();
+      origLeft = rect.left;
+      origTop = rect.top;
+      bar.style.transform = "none";
+      e.preventDefault();
+    };
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      bar.style.left = (origLeft + e.clientX - startX) + "px";
+      bar.style.top = (origTop + e.clientY - startY) + "px";
+    };
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      try {
+        localStorage.setItem(STORAGE_KEY_POS, JSON.stringify({ x: parseInt(bar.style.left), y: parseInt(bar.style.top) }));
+      } catch {}
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    cleanupFns.push(() => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    });
+
+    document.body.appendChild(bar);
   }
-  ((h.textContent = `#sa-bar:hover{box-shadow:0 8px 24px ${p.sh}!important}`),
-    document.head.appendChild(h),
-    "loading" === document.readyState
-      ? document.addEventListener("DOMContentLoaded", () => setTimeout(b, 100))
-      : setTimeout(b, 100));
+
+  // 全局样式注入（含脉冲动画）
+  const style = document.createElement("style");
+  style.textContent = `
+    #sa-bar:hover{box-shadow:0 8px 24px ${theme.sh}!important}
+    @keyframes sa-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  `;
+  document.head.appendChild(style);
+
+  // 深色模式切换重载
+  window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener("change", () => location.reload());
+
+  // 页面卸载时清理
+  window.addEventListener("beforeunload", () => cleanupFns.forEach(fn => fn()));
+
+  // 初始化
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { initBar(); initBackToTop(); });
+  } else {
+    setTimeout(() => { initBar(); initBackToTop(); }, 100);
+  }
 })();
