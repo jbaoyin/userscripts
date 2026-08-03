@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         🔓 强制启用文字复制
-// @description  在网页中强制允许选中和复制文字
+// @name         🔓 强制文字复制
+// @description  解除网页禁止选中/复制的限制，当前支持：QQ阅读。
 // @version      1.0.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
-// @match        *://*/*
+// @match        *://book.qq.com/*
 // @grant        none
 // @run-at       document-start
 // @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/force-copy.user.js
@@ -15,86 +15,69 @@
 (function () {
     'use strict';
 
-    // ========== 1. 事件拦截（捕获阶段，覆盖 document + window）==========
-    const blockedEvents = [
-        'copy', 'cut', 'paste', 'contextmenu',
-        'selectstart', 'dragstart', 'mousedown', 'mouseup'
-    ];
+    const Core = {
+        injectCSS(extraCSS) {
+            const s = document.createElement('style');
+            s.id = '__force-copy-core__';
+            s.textContent = `*,*::before,*::after{user-select:text!important;-webkit-user-select:text!important;-moz-user-select:text!important;-ms-user-select:text!important;-webkit-touch-callout:default!important}${extraCSS}`;
+            (document.documentElement || document).appendChild(s);
+        },
 
-    const allowHandler = (e) => e.stopPropagation();
+        cleanNode(node, attrs) {
+            if (node.nodeType !== 1) return;
+            attrs.forEach(a => node.removeAttribute(a));
+            ['user-select', '-webkit-user-select'].forEach(p => node.style.removeProperty(p));
+        },
 
-    blockedEvents.forEach(event => {
-        document.addEventListener(event, allowHandler, true);
-        window.addEventListener(event, allowHandler, true);
-    });
+        startCleaner(attrs) {
+            const clean = n => this.cleanNode(n, attrs);
+            const init = () => document.querySelectorAll('*').forEach(clean);
+            document.readyState === 'loading'
+                ? document.addEventListener('DOMContentLoaded', init, { once: true })
+                : init();
+            new MutationObserver(ms => ms.forEach(m => {
+                if (m.type === 'attributes') clean(m.target);
+                else m.addedNodes.forEach(n => { if (n.nodeType === 1) { clean(n); n.querySelectorAll?.('*').forEach(clean); } });
+            })).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: [...attrs, 'style'] });
+        },
 
-    // ========== 2. CSS 全局强制选中 ==========
-    const style = document.createElement('style');
-    style.id = '__force-copy-enhanced__';
-    style.textContent = `
-        *, *::before, *::after {
-            -webkit-user-select: text !important;
-            -moz-user-select: text !important;
-            -ms-user-select: text !important;
-            user-select: text !important;
-        }
-        body {
-            -webkit-touch-callout: default !important;
-        }
-        *::before, *::after {
-            pointer-events: none !important;
-        }
-    `;
-    (document.documentElement || document).appendChild(style);
-
-    // ========== 3. 清理内联事件属性与内联 userSelect 样式 ==========
-    const cleanNode = (node) => {
-        if (node.nodeType !== Node.ELEMENT_NODE) return;
-        const attrs = [
-            'unselectable', 'oncopy', 'oncut', 'onpaste',
-            'onselectstart', 'oncontextmenu', 'ondragstart'
-        ];
-        attrs.forEach(attr => {
-            if (node.hasAttribute(attr)) node.removeAttribute(attr);
-        });
-        if (node.style.userSelect || node.style.webkitUserSelect) {
-            node.style.removeProperty('user-select');
-            node.style.removeProperty('-webkit-user-select');
-        }
-    };
-
-    const initialClean = () => {
-        document.querySelectorAll('*').forEach(cleanNode);
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialClean, { once: true });
-    } else {
-        initialClean();
-    }
-
-    // ========== 4. MutationObserver 轻量持续清理 ==========
-    const observer = new MutationObserver(mutations => {
-        for (const mutation of mutations) {
-            mutation.addedNodes.forEach(node => {
-                if (node.nodeType === Node.ELEMENT_NODE) {
-                    cleanNode(node);
-                    node.querySelectorAll?.('*').forEach(cleanNode);
-                }
+        preemptEvents(types) {
+            types.forEach(t => {
+                const h = e => e.stopImmediatePropagation();
+                document.addEventListener(t, h, true);
+                window.addEventListener(t, h, true);
             });
-            if (mutation.type === 'attributes') {
-                cleanNode(mutation.target);
+        },
+
+        init({ extraCSS = '', extraAttrs = [], preemptEventTypes = [], onReady = null } = {}) {
+            this.injectCSS(extraCSS);
+            this.startCleaner([...new Set(['unselectable', 'oncopy', 'oncut', 'onpaste', 'onselectstart', 'oncontextmenu', 'ondragstart', ...extraAttrs])]);
+            if (preemptEventTypes.length) this.preemptEvents(preemptEventTypes);
+            if (typeof onReady === 'function') {
+                document.readyState === 'loading'
+                    ? document.addEventListener('DOMContentLoaded', () => onReady(document), { once: true })
+                    : onReady(document);
             }
         }
-    });
+    };
 
-    observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: [
-            'unselectable', 'oncopy', 'oncut', 'onpaste',
-            'onselectstart', 'oncontextmenu', 'ondragstart', 'style'
-        ]
-    });
+    const SITES = {
+        'book.qq.com': {
+            extraCSS: `[class*="mask"],[class*="overlay"],[class*="block-layer"]{pointer-events:none!important}.reader-container,.chapter-content,.read-content,.text-content,p,span{cursor:text!important}`,
+            extraAttrs: ['data-copyblock', 'data-noselect'],
+            preemptEventTypes: ['copy', 'cut', 'selectstart', 'contextmenu', 'dragstart'],
+            onReady(doc) {
+                const reClean = () => doc.querySelectorAll('.chapter-content,.read-content,.text-content').forEach(el => {
+                    el.style.removeProperty('user-select');
+                    el.style.removeProperty('-webkit-user-select');
+                    ['unselectable', 'data-copyblock', 'data-noselect'].forEach(a => el.removeAttribute(a));
+                });
+                const t = doc.querySelector('#app') || doc.body;
+                if (t) new MutationObserver(reClean).observe(t, { childList: true, subtree: true });
+                reClean();
+            }
+        }
+    };
+
+    Core.init(SITES[location.hostname] || {});
 })();
