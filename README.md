@@ -10,6 +10,10 @@
 
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-subtitles.user.js)
 
+### force-copy.user.js — 🔓 强制启用文字复制
+在网页中强制允许选中和复制文字
+
+安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/force-copy.user.js)
 ## 使用说明
 
 需先安装浏览器扩展，任选其一：
