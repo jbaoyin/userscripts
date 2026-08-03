@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📺 YouTube自动字幕
-// @description  自动开启YouTube中文字幕
-// @version      1.1.1
+// @description  自动开启YouTube中文字幕（含自动翻译回退）
+// @version      1.1.2
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
@@ -13,125 +13,125 @@
 // @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // ==/UserScript==
 
-!(function () {
-  "use strict";
+(function () {
+    'use strict';
 
-  const LANG_KEYWORDS = ["中文(简体)", "中文（简体）", "简体中文", "Chinese (Simplified)"];
-  let fingerprint = GM_getValue("imtFingerprint", "immersive-translate");
+    const LANG_KEYWORDS = ['中文(简体)', '中文（简体）', '简体中文', 'Chinese (Simplified)'];
+    const AUTO_TRANSLATE_KEYWORDS = ['自动翻译', 'Auto-translate', 'Auto translate'];
+    let fingerprint = GM_getValue('imtFingerprint', 'immersive-translate');
 
-  GM_registerMenuCommand("✏️ 设置沉浸式翻译特征字符串（检测失效时用）", () => {
-    const input = prompt(
-      "输入沉浸式翻译的class/id特征字符串（F12检查页面元素获取）：",
-      fingerprint
-    );
-    if (input !== null && input.trim()) {
-      fingerprint = input.trim();
-      GM_setValue("imtFingerprint", fingerprint);
-      alert("已保存，刷新YouTube页面后生效");
-    }
-  });
-
-  // ---------- Toast提示（增加防重复） ----------
-  let toastTimer = null;
-  function showToast(text, duration = 3000) {
-    if (toastTimer) clearTimeout(toastTimer);
-    const existing = document.querySelector(".yt-auto-sub-toast");
-    if (existing) existing.remove();
-
-    const toast = document.createElement("div");
-    toast.className = "yt-auto-sub-toast";
-    toast.textContent = text;
-    toast.style.cssText =
-      "position:fixed;top:70px;right:20px;background:rgba(0,0,0,.85);color:#fff;" +
-      "padding:10px 16px;border-radius:8px;font-size:13px;z-index:100000;" +
-      "box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s";
-    document.body.appendChild(toast);
-
-    toastTimer = setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 300);
-      toastTimer = null;
-    }, duration);
-  }
-
-  // ---------- 核心逻辑（完全保留v1.1.0时序与交互） ----------
-  const norm = (e) => e.replace(/\s/g, "").replace(/（/g, "(").replace(/）/g, ")");
-  const findItem = (keys) => {
-    const items = document.querySelectorAll(".ytp-menuitem");
-    return Array.from(items).find((e) => {
-      const t = norm(e.textContent);
-      return keys.some((k) => t.includes(norm(k)));
-    });
-  };
-
-  const clickCC = () => {
-    const e = document.querySelector(".ytp-subtitles-button");
-    e && "false" === e.getAttribute("aria-pressed") && e.click();
-  };
-
-  const hasImmersiveTranslate = () =>
-    !!document.querySelector(`[class*="${fingerprint}" i], [id*="${fingerprint}" i]`);
-
-  const selectLanguage = () => {
-    const settingsBtn = document.querySelector(".ytp-settings-button");
-    if (!settingsBtn) return;
-    const close = () => settingsBtn.click();
-
-    settingsBtn.click();
-    setTimeout(() => {
-      const subtitleItem = findItem(["字幕", "Subtitles", "CC"]);
-      if (!subtitleItem) return close();
-      subtitleItem.click();
-
-      setTimeout(() => {
-        const direct = findItem(LANG_KEYWORDS);
-        if (direct) return direct.click();
-
-        const autoTranslate = findItem(["自动翻译", "Auto-translate"]);
-        if (!autoTranslate) return close();
-        autoTranslate.click();
-
-        setTimeout(() => {
-          const translated = findItem(LANG_KEYWORDS);
-          translated ? translated.click() : close();
-        }, 400);
-      }, 400);
-    }, 300);
-  };
-
-  // ---------- 执行入口（增加视频ID去重 + yt-navigate-finish监听） ----------
-  const processedVideos = new Set();
-  const getVideoId = () => new URLSearchParams(location.search).get("v");
-
-  const tryEnable = () => {
-    if (!document.querySelector(".html5-video-player")) return;
-    const vid = getVideoId();
-    if (vid && processedVideos.has(vid)) return;
-
-    setTimeout(() => {
-      clickCC();
-      setTimeout(() => {
-        if (hasImmersiveTranslate()) {
-          showToast("检测到沉浸式翻译已启用，默认不选择自动翻译");
-        } else {
-          selectLanguage();
+    GM_registerMenuCommand('✏️ 设置沉浸式翻译特征字符串', () => {
+        const input = prompt('输入沉浸式翻译的class/id特征字符串：', fingerprint);
+        if (input !== null && input.trim()) {
+            fingerprint = input.trim();
+            GM_setValue('imtFingerprint', fingerprint);
+            alert('已保存，刷新页面后生效');
         }
-        if (vid) processedVideos.add(vid);
-      }, 800);
-    }, 1000);
-  };
+    });
 
-  window.addEventListener("load", tryEnable);
-
-  // 兼容YouTube SPA导航
-  let lastUrl = location.href;
-  const onNavigate = () => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      setTimeout(tryEnable, 1500);
+    function showToast(text, duration = 3000) {
+        const el = document.createElement('div');
+        el.textContent = text;
+        el.style.cssText =
+            'position:fixed;top:70px;right:20px;background:rgba(0,0,0,.85);color:#fff;' +
+            'padding:10px 16px;border-radius:8px;font-size:13px;z-index:100000;' +
+            'box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s';
+        document.body.appendChild(el);
+        setTimeout(() => {
+            el.style.opacity = '0';
+            setTimeout(() => el.remove(), 300);
+        }, duration);
     }
-  };
 
-  document.addEventListener("yt-navigate-finish", onNavigate);
-  new MutationObserver(onNavigate).observe(document, { subtree: true, childList: true });
+    const norm = (s) => s.replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')');
+
+    const findMenuItem = (keywords) => {
+        for (const item of document.querySelectorAll('.ytp-menuitem')) {
+            const label = norm(item.textContent || '');
+            if (keywords.some(k => label.includes(norm(k)))) return item;
+        }
+        return null;
+    };
+
+    const waitForElement = (selector, timeout = 3000) =>
+        new Promise((resolve) => {
+            const existing = document.querySelector(selector);
+            if (existing) return resolve(existing);
+            const observer = new MutationObserver(() => {
+                const el = document.querySelector(selector);
+                if (el) { observer.disconnect(); resolve(el); }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+            setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
+        });
+
+    const waitMs = (ms) => new Promise(r => setTimeout(r, ms));
+
+    const clickCC = () => {
+        const btn = document.querySelector('.ytp-subtitles-button');
+        if (btn && btn.getAttribute('aria-pressed') === 'false') btn.click();
+    };
+
+    const hasImmersiveTranslate = () =>
+        !!document.querySelector(`[class*="${fingerprint}" i], [id*="${fingerprint}" i]`);
+
+    const openSettingsMenu = async () => {
+        const btn = document.querySelector('.ytp-settings-button');
+        if (!btn) return false;
+        btn.click();
+        await waitForElement('.ytp-settings-menu:not([style*="display: none"]) .ytp-panel', 2000);
+        return true;
+    };
+
+    const selectChineseSubtitle = async () => {
+        let zhItem = findMenuItem(LANG_KEYWORDS);
+        if (zhItem) { zhItem.click(); return true; }
+
+        const autoItem = findMenuItem(AUTO_TRANSLATE_KEYWORDS);
+        if (autoItem) {
+            autoItem.click();
+            await waitMs(600);
+            await waitForElement('.ytp-settings-menu .ytp-panel', 2000);
+            zhItem = findMenuItem(LANG_KEYWORDS);
+            if (zhItem) { zhItem.click(); return true; }
+        }
+        return false;
+    };
+
+    const tryEnable = async () => {
+        if (!document.querySelector('.html5-video-player')) return;
+        await waitMs(800);
+        clickCC();
+        await waitMs(600);
+
+        if (hasImmersiveTranslate()) {
+            showToast('检测到沉浸式翻译已启用，跳过自动选择');
+            return;
+        }
+
+        if (!(await openSettingsMenu())) {
+            showToast('未找到设置按钮');
+            return;
+        }
+
+        const subMenu = findMenuItem(['字幕', 'Subtitles', 'Captions']);
+        if (subMenu) {
+            subMenu.click();
+            await waitMs(600);
+            await waitForElement('.ytp-settings-menu .ytp-panel', 2000);
+        }
+
+        const ok = await selectChineseSubtitle();
+        showToast(ok ? '✅ 已切换中文字幕' : '⚠️ 未找到中文字幕选项');
+    };
+
+    let lastUrl = '';
+    const onNavigate = () => {
+        if (location.href === lastUrl) return;
+        lastUrl = location.href;
+        tryEnable();
+    };
+
+    window.addEventListener('load', tryEnable);
+    new MutationObserver(onNavigate).observe(document.body, { childList: true, subtree: true });
 })();
