@@ -9,8 +9,8 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @downloadURL  https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-chinese-subtitles.user.js
-// @updateURL    https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-chinese-subtitles.user.js
+// @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
+// @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // ==/UserScript==
 
 (function () {
