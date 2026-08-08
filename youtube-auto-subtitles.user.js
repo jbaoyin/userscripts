@@ -1,137 +1,212 @@
 // ==UserScript==
-// @name         📺 YouTube自动字幕
-// @description  自动开启YouTube中文字幕（含自动翻译回退）
-// @version      1.1.2
-// @author       jbaoyin
+// @name         📺 YouTube自动中文字幕
 // @namespace    https://github.com/jbaoyin/userscripts
+// @version      2.0.0
+// @description  自动开启YouTube中文字幕，无中文字幕时自动选择翻译中文；检测沉浸式翻译后自动停用
+// @author       jbaoyin
 // @license      MIT
 // @match        https://www.youtube.com/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
-// @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
+// @downloadURL  https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-chinese-subtitles.user.js
+// @updateURL    https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-chinese-subtitles.user.js
 // ==/UserScript==
 
 (function () {
-    'use strict';
+  "use strict";
 
-    const LANG_KEYWORDS = ['中文(简体)', '中文（简体）', '简体中文', 'Chinese (Simplified)'];
-    const AUTO_TRANSLATE_KEYWORDS = ['自动翻译', 'Auto-translate', 'Auto translate'];
-    let fingerprint = GM_getValue('imtFingerprint', 'immersive-translate');
+  const CONFIG = {
+    chinese: ["中文(简体)", "中文（简体）", "简体中文", "Chinese (Simplified)"],
+    translate: ["自动翻译", "Auto-translate", "Auto translate"],
+    subtitle: ["字幕", "Subtitles", "Captions"],
+  };
 
-    GM_registerMenuCommand('✏️ 设置沉浸式翻译特征字符串', () => {
-        const input = prompt('输入沉浸式翻译的class/id特征字符串：', fingerprint);
-        if (input !== null && input.trim()) {
-            fingerprint = input.trim();
-            GM_setValue('imtFingerprint', fingerprint);
-            alert('已保存，刷新页面后生效');
-        }
+  let fingerprint = GM_getValue("immersiveFingerprint", "immersive");
+
+  GM_registerMenuCommand("⚙️ 设置沉浸式翻译检测字符串", () => {
+    const v = prompt("请输入检测字符串:", fingerprint);
+    if (v && v.trim()) {
+      fingerprint = v.trim();
+      GM_setValue("immersiveFingerprint", fingerprint);
+      alert("保存成功，刷新页面生效");
+    }
+  });
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const norm = (s) =>
+    (s || "")
+      .replace(/\s/g, "")
+      .replace(/（/g, "(")
+      .replace(/）/g, ")")
+      .toLowerCase();
+
+  function toast(msg) {
+    let old = document.querySelector("#yt-auto-toast");
+    if (old) old.remove();
+
+    const el = document.createElement("div");
+    el.id = "yt-auto-toast";
+    el.textContent = msg;
+    Object.assign(el.style, {
+      position: "fixed",
+      top: "80px",
+      right: "25px",
+      zIndex: 999999999,
+      background: "rgba(0,0,0,.85)",
+      color: "#fff",
+      padding: "10px 16px",
+      borderRadius: "8px",
+      fontSize: "14px",
     });
 
-    function showToast(text, duration = 3000) {
-        const el = document.createElement('div');
-        el.textContent = text;
-        el.style.cssText =
-            'position:fixed;top:70px;right:20px;background:rgba(0,0,0,.85);color:#fff;' +
-            'padding:10px 16px;border-radius:8px;font-size:13px;z-index:100000;' +
-            'box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s';
-        document.body.appendChild(el);
-        setTimeout(() => {
-            el.style.opacity = '0';
-            setTimeout(() => el.remove(), 300);
-        }, duration);
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+  }
+
+  function wait(selector, timeout = 5000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+
+      const loop = () => {
+        const el = document.querySelector(selector);
+        if (el) return resolve(el);
+        if (Date.now() - start > timeout) return resolve(null);
+        setTimeout(loop, 100);
+      };
+
+      loop();
+    });
+  }
+
+  function hasImmersive() {
+    const key = fingerprint.toLowerCase();
+
+    if (document.querySelector(`[class*="${key}"],[id*="${key}"]`)) return true;
+
+    const text = document.body.innerText.toLowerCase();
+
+    return ["immersive", "immersive-translate", "沉浸式翻译"].some((k) =>
+      text.includes(k),
+    );
+  }
+
+  function findMenu(keys) {
+    for (const item of document.querySelectorAll(".ytp-menuitem")) {
+      const text = norm(item.textContent);
+      if (keys.some((k) => text.includes(norm(k)))) return item;
+    }
+    return null;
+  }
+
+  function clickSettings() {
+    const btn = document.querySelector(".ytp-settings-button");
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+
+  function closeSettings() {
+    const btn = document.querySelector(".ytp-settings-button");
+    if (btn) btn.click();
+  }
+
+  function enableCC() {
+    const btn = document.querySelector(".ytp-subtitles-button");
+
+    if (btn && btn.getAttribute("aria-pressed") === "false") {
+      btn.click();
+      return true;
     }
 
-    const norm = (s) => s.replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')');
+    return false;
+  }
 
-    const findMenuItem = (keywords) => {
-        for (const item of document.querySelectorAll('.ytp-menuitem')) {
-            const label = norm(item.textContent || '');
-            if (keywords.some(k => label.includes(norm(k)))) return item;
-        }
-        return null;
-    };
+  async function selectChinese() {
+    let item = findMenu(CONFIG.chinese);
 
-    const waitForElement = (selector, timeout = 3000) =>
-        new Promise((resolve) => {
-            const existing = document.querySelector(selector);
-            if (existing) return resolve(existing);
-            const observer = new MutationObserver(() => {
-                const el = document.querySelector(selector);
-                if (el) { observer.disconnect(); resolve(el); }
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
-            setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
-        });
+    if (item) {
+      item.click();
+      return "中文字幕";
+    }
 
-    const waitMs = (ms) => new Promise(r => setTimeout(r, ms));
+    item = findMenu(CONFIG.translate);
 
-    const clickCC = () => {
-        const btn = document.querySelector('.ytp-subtitles-button');
-        if (btn && btn.getAttribute('aria-pressed') === 'false') btn.click();
-    };
+    if (item) {
+      item.click();
 
-    const hasImmersiveTranslate = () =>
-        !!document.querySelector(`[class*="${fingerprint}" i], [id*="${fingerprint}" i]`);
+      await sleep(600);
 
-    const openSettingsMenu = async () => {
-        const btn = document.querySelector('.ytp-settings-button');
-        if (!btn) return false;
-        btn.click();
-        await waitForElement('.ytp-settings-menu:not([style*="display: none"]) .ytp-panel', 2000);
-        return true;
-    };
+      item = findMenu(CONFIG.chinese);
 
-    const selectChineseSubtitle = async () => {
-        let zhItem = findMenuItem(LANG_KEYWORDS);
-        if (zhItem) { zhItem.click(); return true; }
+      if (item) {
+        item.click();
+        return "自动翻译中文";
+      }
+    }
 
-        const autoItem = findMenuItem(AUTO_TRANSLATE_KEYWORDS);
-        if (autoItem) {
-            autoItem.click();
-            await waitMs(600);
-            await waitForElement('.ytp-settings-menu .ytp-panel', 2000);
-            zhItem = findMenuItem(LANG_KEYWORDS);
-            if (zhItem) { zhItem.click(); return true; }
-        }
-        return false;
-    };
+    return null;
+  }
 
-    const tryEnable = async () => {
-        if (!document.querySelector('.html5-video-player')) return;
-        await waitMs(800);
-        clickCC();
-        await waitMs(600);
+  let lastVideo = "";
 
-        if (hasImmersiveTranslate()) {
-            showToast('检测到沉浸式翻译已启用，跳过自动选择');
-            return;
-        }
+  async function run() {
+    if (location.pathname != "/watch") return;
 
-        if (!(await openSettingsMenu())) {
-            showToast('未找到设置按钮');
-            return;
-        }
+    if (hasImmersive()) {
+      toast("⏸ 检测到沉浸式翻译，脚本停止");
+      return;
+    }
 
-        const subMenu = findMenuItem(['字幕', 'Subtitles', 'Captions']);
-        if (subMenu) {
-            subMenu.click();
-            await waitMs(600);
-            await waitForElement('.ytp-settings-menu .ytp-panel', 2000);
-        }
+    const id = new URLSearchParams(location.search).get("v");
 
-        const ok = await selectChineseSubtitle();
-        showToast(ok ? '✅ 已切换中文字幕' : '⚠️ 未找到中文字幕选项');
-    };
+    if (!id || id === lastVideo) return;
 
-    let lastUrl = '';
-    const onNavigate = () => {
-        if (location.href === lastUrl) return;
-        lastUrl = location.href;
-        tryEnable();
-    };
+    await wait("video");
 
-    window.addEventListener('load', tryEnable);
-    new MutationObserver(onNavigate).observe(document.body, { childList: true, subtree: true });
+    lastVideo = id;
+
+    await sleep(1500);
+
+    enableCC();
+
+    await sleep(500);
+
+    if (!clickSettings()) return;
+
+    await sleep(800);
+
+    const sub = findMenu(CONFIG.subtitle);
+
+    if (!sub) {
+      closeSettings();
+      toast("ℹ️ 当前视频没有字幕");
+      return;
+    }
+
+    sub.click();
+
+    await sleep(500);
+
+    const result = await selectChinese();
+
+    closeSettings();
+
+    toast(result ? "✅ 已开启" + result : "⚠️ 未找到中文字幕");
+  }
+
+  let oldUrl = location.href;
+
+  setInterval(() => {
+    if (location.href !== oldUrl) {
+      oldUrl = location.href;
+      lastVideo = "";
+      run();
+    }
+  }, 1000);
+
+  window.addEventListener("load", run);
 })();
