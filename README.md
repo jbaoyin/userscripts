@@ -9,11 +9,6 @@ Brave/DDG/Google 悬浮工具栏：支持引擎切换、自动翻页、深色模
 自动开启YouTube中文字幕
 
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-subtitles.user.js)
-
-### force-copy.user.js — 🔓 强制启用文字复制
-解除网页禁止选中/复制的限制
-
-安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/force-copy.user.js)
 ## 使用说明
 
 需先安装浏览器扩展，任选其一：
