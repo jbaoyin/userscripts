@@ -1,212 +1,183 @@
 // ==UserScript==
 // @name         📺 YouTube自动中文字幕
 // @namespace    https://github.com/jbaoyin/userscripts
-// @version      2.0.0
-// @description  自动开启YouTube中文字幕，无中文字幕时自动选择翻译中文；检测沉浸式翻译后自动停用
+// @version      3.1.1
+// @description  自动开启YouTube中文字幕，无中文字幕时自动翻译中文
 // @author       jbaoyin
 // @license      MIT
 // @match        https://www.youtube.com/*
-// @grant        GM_registerMenuCommand
-// @grant        GM_setValue
-// @grant        GM_getValue
+// @grant        none
 // @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // ==/UserScript==
 
 (function () {
-  "use strict";
+    "use strict";
 
-  const CONFIG = {
-    chinese: ["中文(简体)", "中文（简体）", "简体中文", "Chinese (Simplified)"],
-    translate: ["自动翻译", "Auto-translate", "Auto translate"],
-    subtitle: ["字幕", "Subtitles", "Captions"],
-  };
+    const CONFIG = {
+        chinese: [
+            "中文(简体)",
+            "中文（简体）",
+            "简体中文",
+            "Chinese (Simplified)"
+        ],
+        translate: [
+            "自动翻译",
+            "Auto-translate",
+            "Auto translate"
+        ],
+        subtitle: [
+            "字幕",
+            "Subtitles",
+            "Captions"
+        ]
+    };
 
-  let fingerprint = GM_getValue("immersiveFingerprint", "immersive");
+    let lastVideo = "";
 
-  GM_registerMenuCommand("⚙️ 设置沉浸式翻译检测字符串", () => {
-    const v = prompt("请输入检测字符串:", fingerprint);
-    if (v && v.trim()) {
-      fingerprint = v.trim();
-      GM_setValue("immersiveFingerprint", fingerprint);
-      alert("保存成功，刷新页面生效");
-    }
-  });
+    const sleep = ms =>
+        new Promise(resolve => setTimeout(resolve, ms));
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const normalize = text =>
+        (text || "")
+            .replace(/\s/g, "")
+            .replace(/（/g, "(")
+            .replace(/）/g, ")")
+            .toLowerCase();
 
-  const norm = (s) =>
-    (s || "")
-      .replace(/\s/g, "")
-      .replace(/（/g, "(")
-      .replace(/）/g, ")")
-      .toLowerCase();
+    function toast(message) {
+        const old = document.querySelector("#yt-auto-toast");
+        if (old) old.remove();
 
-  function toast(msg) {
-    let old = document.querySelector("#yt-auto-toast");
-    if (old) old.remove();
+        const box = document.createElement("div");
+        box.id = "yt-auto-toast";
+        box.textContent = message;
 
-    const el = document.createElement("div");
-    el.id = "yt-auto-toast";
-    el.textContent = msg;
-    Object.assign(el.style, {
-      position: "fixed",
-      top: "80px",
-      right: "25px",
-      zIndex: 999999999,
-      background: "rgba(0,0,0,.85)",
-      color: "#fff",
-      padding: "10px 16px",
-      borderRadius: "8px",
-      fontSize: "14px",
-    });
+        Object.assign(box.style, {
+            position: "fixed",
+            top: "80px",
+            right: "20px",
+            zIndex: 999999,
+            background: "rgba(0,0,0,.85)",
+            color: "#fff",
+            padding: "10px 15px",
+            borderRadius: "8px",
+            fontSize: "14px"
+        });
 
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
-  }
+        document.body.appendChild(box);
 
-  function wait(selector, timeout = 5000) {
-    return new Promise((resolve) => {
-      const start = Date.now();
-
-      const loop = () => {
-        const el = document.querySelector(selector);
-        if (el) return resolve(el);
-        if (Date.now() - start > timeout) return resolve(null);
-        setTimeout(loop, 100);
-      };
-
-      loop();
-    });
-  }
-
-  function hasImmersive() {
-    const key = fingerprint.toLowerCase();
-
-    if (document.querySelector(`[class*="${key}"],[id*="${key}"]`)) return true;
-
-    const text = document.body.innerText.toLowerCase();
-
-    return ["immersive", "immersive-translate", "沉浸式翻译"].some((k) =>
-      text.includes(k),
-    );
-  }
-
-  function findMenu(keys) {
-    for (const item of document.querySelectorAll(".ytp-menuitem")) {
-      const text = norm(item.textContent);
-      if (keys.some((k) => text.includes(norm(k)))) return item;
-    }
-    return null;
-  }
-
-  function clickSettings() {
-    const btn = document.querySelector(".ytp-settings-button");
-    if (btn) {
-      btn.click();
-      return true;
-    }
-    return false;
-  }
-
-  function closeSettings() {
-    const btn = document.querySelector(".ytp-settings-button");
-    if (btn) btn.click();
-  }
-
-  function enableCC() {
-    const btn = document.querySelector(".ytp-subtitles-button");
-
-    if (btn && btn.getAttribute("aria-pressed") === "false") {
-      btn.click();
-      return true;
+        setTimeout(() => {
+            box.remove();
+        }, 3000);
     }
 
-    return false;
-  }
+    async function waitFor(selector, timeout = 8000) {
+        const start = Date.now();
 
-  async function selectChinese() {
-    let item = findMenu(CONFIG.chinese);
+        while (Date.now() - start < timeout) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+            await sleep(200);
+        }
 
-    if (item) {
-      item.click();
-      return "中文字幕";
+        return null;
     }
 
-    item = findMenu(CONFIG.translate);
-
-    if (item) {
-      item.click();
-
-      await sleep(600);
-
-      item = findMenu(CONFIG.chinese);
-
-      if (item) {
-        item.click();
-        return "自动翻译中文";
-      }
+    function findMenuItem(keys) {
+        for (const item of document.querySelectorAll(".ytp-menuitem")) {
+            const text = normalize(item.innerText);
+            if (keys.some(key => text.includes(normalize(key)))) {
+                return item;
+            }
+        }
+        return null;
     }
 
-    return null;
-  }
-
-  let lastVideo = "";
-
-  async function run() {
-    if (location.pathname != "/watch") return;
-
-    if (hasImmersive()) {
-      toast("⏸ 检测到沉浸式翻译，脚本停止");
-      return;
+    function getSubtitleButton() {
+        return document.querySelector(".ytp-subtitles-button");
     }
 
-    const id = new URLSearchParams(location.search).get("v");
-
-    if (!id || id === lastVideo) return;
-
-    await wait("video");
-
-    lastVideo = id;
-
-    await sleep(1500);
-
-    enableCC();
-
-    await sleep(500);
-
-    if (!clickSettings()) return;
-
-    await sleep(800);
-
-    const sub = findMenu(CONFIG.subtitle);
-
-    if (!sub) {
-      closeSettings();
-      toast("ℹ️ 当前视频没有字幕");
-      return;
+    function enableSubtitle() {
+        const btn = getSubtitleButton();
+        if (btn && btn.getAttribute("aria-pressed") === "false") {
+            btn.click();
+            return true;
+        }
+        return false;
     }
 
-    sub.click();
-
-    await sleep(500);
-
-    const result = await selectChinese();
-
-    closeSettings();
-
-    toast(result ? "✅ 已开启" + result : "⚠️ 未找到中文字幕");
-  }
-
-  let oldUrl = location.href;
-
-  setInterval(() => {
-    if (location.href !== oldUrl) {
-      oldUrl = location.href;
-      lastVideo = "";
-      run();
+    function openSettings() {
+        const btn = document.querySelector(".ytp-settings-button");
+        if (!btn) return false;
+        btn.click();
+        return true;
     }
-  }, 1000);
 
-  window.addEventListener("load", run);
+    function closeSettings() {
+        const btn = document.querySelector(".ytp-settings-button");
+        if (btn) btn.click();
+    }
+
+    async function selectChinese() {
+        let item = findMenuItem(CONFIG.chinese);
+        if (item) {
+            item.click();
+            return "中文字幕";
+        }
+
+        item = findMenuItem(CONFIG.translate);
+        if (item) {
+            item.click();
+            await sleep(800);
+            item = findMenuItem(CONFIG.chinese);
+            if (item) {
+                item.click();
+                return "自动翻译中文";
+            }
+        }
+
+        return null;
+    }
+
+    async function run() {
+        if (location.pathname !== "/watch") return;
+
+        const videoId = new URLSearchParams(location.search).get("v");
+        if (!videoId || videoId === lastVideo) return;
+
+        await waitFor("video");
+        await sleep(1000);
+
+        enableSubtitle();
+        await sleep(500);
+
+        if (!openSettings()) return;
+        await sleep(600);
+
+        const subtitle = findMenuItem(CONFIG.subtitle);
+        if (!subtitle) {
+            closeSettings();
+            toast("ℹ️ 当前视频没有字幕");
+            lastVideo = videoId;
+            return;
+        }
+
+        subtitle.click();
+        await sleep(700);
+
+        const result = await selectChinese();
+        closeSettings();
+
+        toast(result ? "✅ " + result : "⚠️ 未找到中文");
+        lastVideo = videoId;
+    }
+
+    // 监听 YouTube 无刷新切换视频
+    setInterval(() => {
+        const id = new URLSearchParams(location.search).get("v");
+        if (id && id !== lastVideo) {
+            run();
+        }
+    }, 1500);
 })();
