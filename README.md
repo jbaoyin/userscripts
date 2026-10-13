@@ -6,7 +6,7 @@ DDG/Google/Bing 悬浮工具栏：支持引擎切换、自动翻页、深色模�
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js)
 
 ### youtube-auto-subtitles.user.js — 📺 YouTube自动字幕
-自动开启YouTube中文字幕
+自动开启YouTube中文字幕，无中文字幕时自动翻译中文。
 
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-subtitles.user.js)
 ## 使用说明
