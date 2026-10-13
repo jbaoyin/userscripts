@@ -1,19 +1,19 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
-// @description  DDG/Google/Bing 悬浮工具栏：支持引擎切换、自动翻页、深色模式、一键回顶、拖拽记忆与 ESC 快捷隐藏。
-// @version      2.0.0
+// @description  DDG/Google/cn.Bing 悬浮工具栏：支持引擎切换、自动翻页、深色模式、一键回顶、拖拽记忆与 ESC 快捷隐藏。
+// @version      2.1.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
 // @license      MIT
 // @match        *://duckduckgo.com/*
 // @match        *://*.google.com*/search*
-// @match        *://*.bing.com/search*
+// @match        *://cn.bing.com/search*
 // @grant        GM_xmlhttpRequest
 // @connect      duckduckgo.com
 // @connect      google.com
 // @connect      google.com.hk
 // @connect      google.co.jp
-// @connect      bing.com
+// @connect      cn.bing.com
 // @downloadURL  https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
 // @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js
 // ==/UserScript==
@@ -21,8 +21,23 @@
 !(function () {
   "use strict";
 
-  const CONFIG = { MAX_PAGE: 25, MAX_DOM_RESULTS: 150, TIMEOUT: 8000, FAIL_LIMIT: 2 };
-  
+  const CONFIG = {
+    MAX_PAGE: 25,
+    MAX_DOM_RESULTS: 150,
+    TIMEOUT: 10000,
+    FAIL_LIMIT: 3,
+    FETCH_DELAY_MIN: 400,
+    FETCH_DELAY_MAX: 900,
+    SCROLL_THRESHOLD: 600,
+    TRIGGER_COOLDOWN: 1200,
+    URL_CHECK_INTERVAL: 250,
+    RESET_DELAY: 300,
+    RESET_GUARD: 1500,
+    SCROLL_AFTER_RESET: 20,
+    SCROLL_DEBOUNCE: 250,
+    PERIODIC_CHECK: 1200
+  };
+
   const storage = {
     get(k, f) { try { const v = localStorage.getItem(k); return v !== null ? JSON.parse(v) : f; } catch { return f; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -42,13 +57,42 @@
         const primary = Array.from(doc.querySelectorAll(".MjjYud"));
         return (primary.length ? primary : Array.from(doc.querySelectorAll(".g"))).filter(el => el.querySelector("h3"));
       },
-      getContainer: doc => doc.querySelector(".MjjYud")?.parentElement || doc.querySelector(".g")?.parentElement
+      getContainer: doc => doc.querySelector(".MjjYud")?.parentElement || doc.querySelector(".g")?.parentElement || doc.querySelector("#search")
     },
     {
-      name: "Bing", url: "https://www.bing.com/search", test: /bing\.com.*\/search/,
+      name: "Bing", url: "https://cn.bing.com/search", test: /cn\.bing\.com.*\/search/,
       pageParam: "first", pageStep: 10, pageBase: 1, auto: true, icon: "🅱️", color: "#008080",
-      getResults: doc => Array.from(doc.querySelectorAll("#b_results .b_algo, li.b_algo, .b_ans")),
-      getContainer: doc => doc.querySelector("#b_results")
+      getResults: doc => Array.from(doc.querySelectorAll("#b_results > li.b_algo, #b_results .b_algo")),
+      getContainer: doc => {
+        const byId = doc.querySelector("#b_results");
+        if (byId) return byId;
+        const first = doc.querySelector("li.b_algo, .b_algo");
+        if (first) {
+          let el = first.parentElement;
+          while (el && el !== doc.body) {
+            if (el.tagName === "OL" || el.tagName === "UL") return el;
+            el = el.parentElement;
+          }
+          return first.parentElement;
+        }
+        return doc.querySelector("main");
+      },
+      getCurrentPageFromUI: doc => {
+        const selectors = [
+          ".b_pag li.b_active", ".b_pag .b_active",
+          ".b_pag .sb_pagS", ".b_pag .sb_pagS_bp",
+          '.b_pag [aria-current="page"]', ".b_pag a.active",
+          ".sb_pag li.b_active", ".sb_pag .b_active"
+        ];
+        for (const s of selectors) {
+          const el = doc.querySelector(s);
+          if (el) {
+            const n = parseInt((el.textContent || "").trim(), 10);
+            if (!isNaN(n) && n > 0) return n;
+          }
+        }
+        return null;
+      }
     }
   ];
 
@@ -56,15 +100,107 @@
   if (!engine) return;
 
   const isDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  let autoPage = storage.get("sa_auto_v2.0", true);
+  let autoPage = storage.get("sa_auto_v2.1", true);
   let isLoading = false, failCount = 0, activeXhr = null;
-  let totalCount = engine.getResults(document).length;
-  let sentinel = null;
+  let totalCount = 0;
+  let currentPage = 1;
+  let lastTrigger = 0;
+  let toggleUpdate = () => {};
+  let generation = 0;
+  let canAutoLoad = true;
+  let resetGuardUntil = 0;
+  let resetScrollY = 0;
+  let pendingBottomCheck = false;
+  let pendingCheck = false;
+  let lastY = 0;
+  const seenHrefs = new Set();
+
+  function getHref(el) {
+    const a = el.querySelector("a[href]");
+    if (!a) return null;
+    try { return new URL(a.href, location.href).href.split("#")[0]; } catch { return a.href; }
+  }
+
+  function resolveContainer() {
+    return engine.getContainer(document);
+  }
+
+  function computePageFromUrl() {
+    const p = new URLSearchParams(location.search);
+    const raw = parseInt(p.get(engine.pageParam)) || 0;
+    return Math.max(1, Math.floor((raw - engine.pageBase) / engine.pageStep) + 1);
+  }
+
+  function detectCurrentPage() {
+    if (engine.getCurrentPageFromUI) {
+      const ui = engine.getCurrentPageFromUI(document);
+      if (ui != null) return ui;
+    }
+    return computePageFromUrl();
+  }
+
+  function collectCurrentPage() {
+    seenHrefs.clear();
+    const items = engine.getResults(document);
+    totalCount = items.length;
+    items.forEach(el => { const h = getHref(el); if (h) seenHrefs.add(h); });
+  }
+
+  function updatePgUI(text) {
+    const pgEl = document.getElementById("sa-pg");
+    if (pgEl) pgEl.textContent = text || `📄 第 ${currentPage} 页`;
+  }
+
+  function isNearBottom() {
+    const scrollPos = window.scrollY + window.innerHeight;
+    const docHeight = Math.max(
+      document.body?.scrollHeight || 0,
+      document.documentElement?.scrollHeight || 0
+    );
+    return (docHeight - scrollPos) < CONFIG.SCROLL_THRESHOLD;
+  }
+
+  function resetState() {
+    generation++;
+    if (activeXhr) { try { activeXhr.abort(); } catch {} activeXhr = null; }
+    isLoading = false;
+    failCount = 0;
+
+    document.querySelectorAll(".sa-page-block").forEach(el => el.remove());
+
+    currentPage = detectCurrentPage();
+    collectCurrentPage();
+
+    canAutoLoad = false;
+    lastTrigger = Date.now();
+    resetGuardUntil = Date.now() + CONFIG.RESET_GUARD;
+    resetScrollY = window.scrollY;
+    pendingBottomCheck = false;
+    pendingCheck = false;
+    lastY = window.scrollY;
+
+    updatePgUI();
+
+    const myGen = generation;
+    setTimeout(() => {
+      if (myGen !== generation) return;
+      resetGuardUntil = 0;
+      if (pendingBottomCheck && autoPage && !isLoading && currentPage < CONFIG.MAX_PAGE) {
+        pendingBottomCheck = false;
+        canAutoLoad = true;
+        tryLoadIfAtBottom();
+      }
+    }, CONFIG.RESET_GUARD + 50);
+  }
+
+  currentPage = detectCurrentPage();
+  collectCurrentPage();
+  lastY = window.scrollY;
+  resetScrollY = window.scrollY;
 
   const params = new URLSearchParams(location.search);
-  let currentPage = Math.max(1, Math.floor(((parseInt(params.get(engine.pageParam)) || 0) - engine.pageBase) / engine.pageStep) + 1);
 
-  const th = isDark 
+  const th = isDark
     ? { bg: "#2d2d2d", bg2: "#3a3a3a", bgOn: "#2d4a2d", bd: "#555", tx: "#e0e0e0", tx2: "#b0b0b0" }
     : { bg: "#fff", bg2: "#f5f5f5", bgOn: "#e8f5e8", bd: "#e0e0e0", tx: "#333", tx2: "#666" };
 
@@ -80,16 +216,19 @@
     #sa-tip { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,.85); color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 13px; z-index: 100000; pointer-events: none; display: none; transition: opacity .3s; }
     .sa-spin { display: inline-block; width: 10px; height: 10px; border: 2px solid rgba(255,255,255,.3); border-radius: 50%; border-top-color: #fff; animation: sa-spin 0.8s linear infinite; margin-right: 4px; vertical-align: middle; }
     @keyframes sa-spin { to { transform: rotate(360deg); } }
+    .sa-page-header { margin: 24px 0; padding: 10px; text-align: center; background: ${th.bg2}; color: ${th.tx}; border-radius: 8px; font-weight: bold; }
+    .sa-page-block { list-style: none; }
   `;
   document.head.appendChild(style);
 
-  function toast(msg) {
-    let tip = document.getElementById("sa-tip") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "sa-tip" }));
+  function toast(msg, ms = 1500) {
+    let tip = document.getElementById("sa-tip");
+    if (!tip) { tip = document.createElement("div"); tip.id = "sa-tip"; document.body.appendChild(tip); }
     tip.textContent = msg;
     tip.style.display = "block";
     tip.style.opacity = "1";
     clearTimeout(tip.t);
-    tip.t = setTimeout(() => { tip.style.opacity = "0"; setTimeout(() => tip.style.display = "none", 300); }, 1500);
+    tip.t = setTimeout(() => { tip.style.opacity = "0"; setTimeout(() => { tip.style.display = "none"; }, 300); }, ms);
   }
 
   function sanitize(node) {
@@ -99,7 +238,7 @@
 
   function safeFetch(url) {
     return new Promise((resolve, reject) => {
-      if (activeXhr) { activeXhr.abort(); activeXhr = null; }
+      if (activeXhr) { try { activeXhr.abort(); } catch {} activeXhr = null; }
       let xhr = null, timer = null, settled = false;
 
       const finish = (err, val) => {
@@ -110,32 +249,65 @@
         err ? reject(val) : resolve(val);
       };
 
-      const abortFn = () => { xhr?.abort(); finish(true, new Error("aborted")); };
+      const abortFn = () => { try { xhr?.abort(); } catch {} finish(true, new Error("aborted")); };
       activeXhr = { abort: abortFn };
 
+      const delay = CONFIG.FETCH_DELAY_MIN + Math.random() * (CONFIG.FETCH_DELAY_MAX - CONFIG.FETCH_DELAY_MIN);
       setTimeout(() => {
         if (settled) return;
         xhr = GM_xmlhttpRequest({
           method: "GET",
           url: url,
           headers: {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache",
+            "DNT": "1",
             "Referer": new URL(url).origin + "/",
             "User-Agent": navigator.userAgent
           },
           onload: r => { r.status >= 200 && r.status < 300 ? finish(false, r.responseText) : finish(true, new Error("HTTP " + r.status)); },
-          onerror: e => finish(true, e)
+          onerror: e => finish(true, new Error(e?.error || "network error")),
+          ontimeout: () => finish(true, new Error("timeout"))
         });
         activeXhr = xhr;
         timer = setTimeout(abortFn, CONFIG.TIMEOUT);
-      }, 300 + Math.random() * 300);
+      }, delay);
     });
   }
 
+  function buildBlock(items, next) {
+    const container = resolveContainer();
+    if (!container) throw new Error("找不到结果容器");
+    const tag = (container.tagName === "OL" || container.tagName === "UL") ? "li" : "div";
+    const block = document.createElement(tag);
+    block.className = "sa-page-block";
+    block.dataset.count = items.length;
+
+    const head = document.createElement("div");
+    head.className = "sa-page-header";
+    head.textContent = `━━━ 第 ${next} 页 ━━━`;
+    block.appendChild(head);
+
+    items.forEach(item => block.appendChild(sanitize(item.cloneNode(true))));
+    return { container, block };
+  }
+
+  function insertBlock(items, next) {
+    let { container, block } = buildBlock(items, next);
+    container.appendChild(block);
+    if (!block.isConnected) {
+      try { block.remove(); } catch {}
+      ({ container, block } = buildBlock(items, next));
+      container.appendChild(block);
+    }
+    return { container, block };
+  }
+
   async function loadNext() {
+    if (isLoading || !autoPage || !canAutoLoad || currentPage >= CONFIG.MAX_PAGE) return;
+    const myGen = generation;
     const next = currentPage + 1;
-    if (isLoading || !autoPage || next > CONFIG.MAX_PAGE) return;
     isLoading = true;
 
     const pgEl = document.getElementById("sa-pg");
@@ -146,52 +318,100 @@
       u.searchParams.set(engine.pageParam, ((next - 1) * engine.pageStep + engine.pageBase).toString());
 
       const html = await safeFetch(u.toString());
+      if (myGen !== generation) return;
+
+      if (engine.name === "Google") {
+        const looksLikeLogin = /accounts\.google\.com|ServiceLogin/i.test(html);
+        const hasResults = /class="[^"]*\bMjjYud\b/.test(html) || /class="[^"]*\bg\b[^"]*"[^>]*>\s*<a[^>]*href="http/i.test(html);
+        if (looksLikeLogin && !hasResults) throw new Error("Google 要求登录");
+      }
+
       const doc = new DOMParser().parseFromString(html, "text/html");
-      const newItems = engine.getResults(doc);
-      if (!newItems.length) throw new Error("Empty");
+      const rawItems = engine.getResults(doc);
+      if (!rawItems.length) throw new Error("无结果");
 
-      const container = engine.getContainer(document);
-      if (!container) throw new Error("No container");
+      const newItems = rawItems.filter(el => {
+        const h = getHref(el);
+        if (!h || seenHrefs.has(h)) return false;
+        seenHrefs.add(h);
+        return true;
+      });
+      if (!newItems.length) throw new Error("结果全部重复");
 
-      const block = document.createElement("div");
-      block.className = "sa-page-block";
-      block.dataset.count = newItems.length;
-      block.innerHTML = `<div style="margin:24px 0;padding:10px;text-align:center;background:${th.bg2};color:${th.tx};border-radius:8px;font-weight:bold;">━━━ 第 ${next} 页 ━━━</div>`;
-      
-      newItems.forEach(item => block.appendChild(sanitize(item.cloneNode(true))));
-
-      if (sentinel && sentinel.parentElement === container) container.insertBefore(block, sentinel);
-      else container.appendChild(block);
+      insertBlock(newItems, next);
 
       totalCount += newItems.length;
-      while (totalCount > CONFIG.MAX_DOM_RESULTS) {
-        const blocks = container.querySelectorAll(".sa-page-block");
-        if (blocks.length) {
-          totalCount = Math.max(0, totalCount - parseInt(blocks[0].dataset.count || 0));
-          blocks[0].remove();
-        } else break;
+      const container = resolveContainer();
+      if (container) {
+        while (totalCount > CONFIG.MAX_DOM_RESULTS) {
+          const blocks = container.querySelectorAll(".sa-page-block");
+          if (blocks.length > 1) {
+            totalCount = Math.max(0, totalCount - parseInt(blocks[0].dataset.count || 0));
+            blocks[0].remove();
+          } else break;
+        }
       }
 
       currentPage = next;
       failCount = 0;
-      if (pgEl) pgEl.textContent = `📄 第 ${currentPage} 页`;
+      lastTrigger = Date.now() + CONFIG.TRIGGER_COOLDOWN;
+      updatePgUI();
     } catch (e) {
+      if (myGen !== generation) return;
       if (e.message !== "aborted") {
-        toast("❌ 翻页失败");
-        if (++failCount >= CONFIG.FAIL_LIMIT) toast(`⚠️ ${engine.name} 响应受限`, 3000);
+        if (e.message.includes("登录")) {
+          toast("⚠️ Google 需要登录才能翻页，已暂停自动翻页", 3500);
+          autoPage = false;
+          storage.set("sa_auto_v2.1", autoPage);
+          toggleUpdate();
+        } else {
+          failCount++;
+          if (failCount >= CONFIG.FAIL_LIMIT) {
+            toast(`⚠️ ${engine.name} 响应受限，已暂停自动翻页`, 3500);
+            autoPage = false;
+            storage.set("sa_auto_v2.1", autoPage);
+            toggleUpdate();
+          } else {
+            toast(`❌ 翻页失败: ${e.message}`);
+          }
+        }
       }
     } finally {
-      isLoading = false;
-      if (pgEl && pgEl.textContent.includes("加载")) pgEl.textContent = `📄 第 ${currentPage} 页`;
+      if (myGen === generation) {
+        isLoading = false;
+        if (pgEl && pgEl.textContent.includes("加载")) updatePgUI();
+        if (pendingCheck) {
+          pendingCheck = false;
+          setTimeout(tryLoadIfAtBottom, 200);
+        }
+      }
     }
+  }
+
+  function tryLoadIfAtBottom() {
+    if (!autoPage || !engine.auto) return;
+    if (isLoading) { pendingCheck = true; return; }
+    if (currentPage >= CONFIG.MAX_PAGE) return;
+    if (!canAutoLoad) return;
+    if (Date.now() < resetGuardUntil) return;
+    if (!isNearBottom()) return;
+    const now = Date.now();
+    if (now - lastTrigger < CONFIG.TRIGGER_COOLDOWN) return;
+    lastTrigger = now;
+    loadNext();
   }
 
   const bar = document.createElement("div");
   bar.id = "sa-bar";
-  const pos = storage.get("sa_pos_v2.0", null) || { x: 10, y: window.innerHeight / 2 };
-  bar.style.left = `${pos.x}px`;
-  bar.style.top = `${pos.y}px`;
-  if (!storage.get("sa_pos_v2.0", null)) bar.style.transform = "translateY(-50%)";
+  const savedPos = storage.get("sa_pos_v2.1", null);
+  if (savedPos) {
+    bar.style.left = `${Math.round(savedPos.x)}px`;
+    bar.style.top = `${Math.round(savedPos.y)}px`;
+  } else {
+    bar.style.left = "10px";
+    bar.style.top = `${Math.round(window.innerHeight / 2)}px`;
+    bar.style.transform = "translateY(-50%)";
+  }
 
   const header = document.createElement("div");
   header.id = "sa-header";
@@ -217,13 +437,15 @@
     bar.appendChild(btn);
   });
 
-  let toggle = null;
   if (engine.auto) {
-    toggle = document.createElement("div");
+    const toggle = document.createElement("div");
     toggle.className = "sa-toggle";
-    const updateT = () => { toggle.textContent = `🔄 翻页: ${autoPage ? "ON" : "OFF"}`; toggle.style.background = autoPage ? th.bgOn : th.bg2; };
-    updateT();
-    toggle.onclick = () => { autoPage = !autoPage; storage.set("sa_auto_v2.0", autoPage); updateT(); };
+    toggleUpdate = () => {
+      toggle.textContent = `🔄 翻页: ${autoPage ? "ON" : "OFF"}`;
+      toggle.style.background = autoPage ? th.bgOn : th.bg2;
+    };
+    toggleUpdate();
+    toggle.onclick = () => { autoPage = !autoPage; storage.set("sa_auto_v2.1", autoPage); toggleUpdate(); };
     bar.appendChild(toggle);
   }
 
@@ -246,10 +468,13 @@
   });
   document.addEventListener("mouseup", () => {
     if (!drag) return;
-    drag = false; storage.set("sa_pos_v2.0", { x: parseInt(bar.style.left), y: parseInt(bar.style.top) });
+    drag = false;
+    storage.set("sa_pos_v2.1", { x: parseInt(bar.style.left), y: parseInt(bar.style.top) });
   });
 
-  window.addEventListener("keydown", e => { if (e.key === "Escape") bar.style.display = bar.style.display === "none" ? "block" : "none"; });
+  window.addEventListener("keydown", e => {
+    if (e.key === "Escape") bar.style.display = bar.style.display === "none" ? "block" : "none";
+  });
   window.addEventListener("resize", () => {
     bar.style.left = `${Math.min(parseInt(bar.style.left) || 0, window.innerWidth - bar.offsetWidth)}px`;
     bar.style.top = `${Math.min(parseInt(bar.style.top) || 0, window.innerHeight - bar.offsetHeight)}px`;
@@ -262,25 +487,41 @@
   topBtn.textContent = "⬆";
   topBtn.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
   document.body.appendChild(topBtn);
-
   window.addEventListener("scroll", () => { topBtn.style.display = window.scrollY > 300 ? "block" : "none"; }, { passive: true });
 
-  const container = engine.getContainer(document);
-  if (container) {
-    sentinel = document.createElement("div");
-    sentinel.style.cssText = "width:100%;height:1px;visibility:hidden;pointer-events:none;";
-    container.appendChild(sentinel);
+  let lastUrl = location.href;
+  setInterval(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      setTimeout(resetState, CONFIG.RESET_DELAY);
+    }
+  }, CONFIG.URL_CHECK_INTERVAL);
 
-    let last = 0;
-    new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting && autoPage && engine.auto && !isLoading && currentPage < CONFIG.MAX_PAGE) {
-          const now = Date.now();
-          if (now - last > 1200) { last = now; loadNext(); }
-        }
-      });
-    }, { rootMargin: "400px" }).observe(sentinel);
+  if (engine.auto) {
+    let scrollDebounceTimer = null;
+
+    window.addEventListener("scroll", () => {
+      const y = window.scrollY;
+      const delta = Math.abs(y - lastY);
+      if (delta < 1) return;
+      lastY = y;
+
+      if (Date.now() < resetGuardUntil) {
+        if (isNearBottom()) pendingBottomCheck = true;
+        return;
+      }
+
+      if (!canAutoLoad && Math.abs(y - resetScrollY) >= CONFIG.SCROLL_AFTER_RESET) {
+        canAutoLoad = true;
+      }
+
+      clearTimeout(scrollDebounceTimer);
+      scrollDebounceTimer = setTimeout(tryLoadIfAtBottom, CONFIG.SCROLL_DEBOUNCE);
+    }, { passive: true });
+
+    setInterval(tryLoadIfAtBottom, CONFIG.PERIODIC_CHECK);
+    setTimeout(tryLoadIfAtBottom, 1200);
   }
 
-  window.addEventListener("beforeunload", () => activeXhr?.abort());
+  window.addEventListener("beforeunload", () => { try { activeXhr?.abort(); } catch {} });
 })();
