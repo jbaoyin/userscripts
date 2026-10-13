@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         📺 YouTube自动中文字幕
 // @namespace    https://github.com/jbaoyin/userscripts
-// @version      3.1.1
+// @version      3.2.0
 // @description  自动开启YouTube中文字幕，无中文字幕时自动翻译中文
 // @author       jbaoyin
 // @license      MIT
@@ -11,173 +11,72 @@
 // @updateURL    https://github.com/jbaoyin/userscripts/raw/refs/heads/main/youtube-auto-subtitles.user.js
 // ==/UserScript==
 
-(function () {
+(() => {
     "use strict";
+    const C = {
+        zh: ["中文(简体)", "中文（简体）", "简体中文", "Chinese (Simplified)"],
+        tr: ["自动翻译", "Auto-translate", "Auto translate"],
+        sub: ["字幕", "Subtitles", "Captions"]
+    };
+    let last = "", running = false;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const norm = t => (t || "").replace(/\s/g, "").replace(/[（）]/g, m => m === "（" ? "(" : ")").toLowerCase();
 
-    const CONFIG = {
-        chinese: [
-            "中文(简体)",
-            "中文（简体）",
-            "简体中文",
-            "Chinese (Simplified)"
-        ],
-        translate: [
-            "自动翻译",
-            "Auto-translate",
-            "Auto translate"
-        ],
-        subtitle: [
-            "字幕",
-            "Subtitles",
-            "Captions"
-        ]
+    const toast = msg => {
+        document.querySelector("#yt-auto-toast")?.remove();
+        const b = Object.assign(document.createElement("div"), { id: "yt-auto-toast", textContent: msg });
+        Object.assign(b.style, {
+            position: "fixed", top: "80px", right: "20px", zIndex: "999999",
+            background: "rgba(0,0,0,.85)", color: "#fff", padding: "10px 15px", borderRadius: "8px", fontSize: "14px"
+        });
+        document.body.appendChild(b);
+        setTimeout(() => b.remove(), 3000);
     };
 
-    let lastVideo = "";
-
-    const sleep = ms =>
-        new Promise(resolve => setTimeout(resolve, ms));
-
-    const normalize = text =>
-        (text || "")
-            .replace(/\s/g, "")
-            .replace(/（/g, "(")
-            .replace(/）/g, ")")
-            .toLowerCase();
-
-    function toast(message) {
-        const old = document.querySelector("#yt-auto-toast");
-        if (old) old.remove();
-
-        const box = document.createElement("div");
-        box.id = "yt-auto-toast";
-        box.textContent = message;
-
-        Object.assign(box.style, {
-            position: "fixed",
-            top: "80px",
-            right: "20px",
-            zIndex: 999999,
-            background: "rgba(0,0,0,.85)",
-            color: "#fff",
-            padding: "10px 15px",
-            borderRadius: "8px",
-            fontSize: "14px"
-        });
-
-        document.body.appendChild(box);
-
-        setTimeout(() => {
-            box.remove();
-        }, 3000);
-    }
-
-    async function waitFor(selector, timeout = 8000) {
-        const start = Date.now();
-
-        while (Date.now() - start < timeout) {
-            const el = document.querySelector(selector);
-            if (el) return el;
-            await sleep(200);
-        }
-
-        return null;
-    }
-
-    function findMenuItem(keys) {
-        for (const item of document.querySelectorAll(".ytp-menuitem")) {
-            const text = normalize(item.innerText);
-            if (keys.some(key => text.includes(normalize(key)))) {
-                return item;
-            }
-        }
-        return null;
-    }
-
-    function getSubtitleButton() {
-        return document.querySelector(".ytp-subtitles-button");
-    }
-
-    function enableSubtitle() {
-        const btn = getSubtitleButton();
-        if (btn && btn.getAttribute("aria-pressed") === "false") {
-            btn.click();
-            return true;
-        }
-        return false;
-    }
-
-    function openSettings() {
-        const btn = document.querySelector(".ytp-settings-button");
-        if (!btn) return false;
-        btn.click();
-        return true;
-    }
-
-    function closeSettings() {
-        const btn = document.querySelector(".ytp-settings-button");
-        if (btn) btn.click();
-    }
-
-    async function selectChinese() {
-        let item = findMenuItem(CONFIG.chinese);
-        if (item) {
-            item.click();
-            return "中文字幕";
-        }
-
-        item = findMenuItem(CONFIG.translate);
-        if (item) {
-            item.click();
-            await sleep(800);
-            item = findMenuItem(CONFIG.chinese);
-            if (item) {
-                item.click();
-                return "自动翻译中文";
-            }
-        }
-
-        return null;
-    }
+    const find = keys => Array.from(document.querySelectorAll(".ytp-popup.ytp-settings-menu .ytp-menuitem"))
+        .find(el => keys.some(k => norm(el.innerText).includes(norm(k))));
 
     async function run() {
-        if (location.pathname !== "/watch") return;
+        if (location.pathname !== "/watch" || running) return;
+        const id = new URLSearchParams(location.search).get("v");
+        if (!id || id === last) return;
+        running = true; last = id;
 
-        const videoId = new URLSearchParams(location.search).get("v");
-        if (!videoId || videoId === lastVideo) return;
+        const start = Date.now();
+        while (!document.querySelector("video") && Date.now() - start < 8000) await sleep(200);
+        await sleep(800);
 
-        await waitFor("video");
-        await sleep(1000);
+        const subBtn = document.querySelector(".ytp-subtitles-button");
+        if (subBtn?.getAttribute("aria-pressed") === "false") subBtn.click();
+        await sleep(300);
 
-        enableSubtitle();
-        await sleep(500);
+        const setBtn = document.querySelector(".ytp-settings-button");
+        if (!setBtn) { running = false; return; }
+        setBtn.click(); await sleep(400);
 
-        if (!openSettings()) return;
-        await sleep(600);
+        const subMenu = find(C.sub);
+        if (!subMenu) { setBtn.click(); toast("ℹ️ 当前视频没有字幕"); running = false; return; }
+        subMenu.click(); await sleep(400);
 
-        const subtitle = findMenuItem(CONFIG.subtitle);
-        if (!subtitle) {
-            closeSettings();
-            toast("ℹ️ 当前视频没有字幕");
-            lastVideo = videoId;
-            return;
+        let res = find(C.zh);
+        if (!res) {
+            const trMenu = find(C.tr);
+            if (trMenu) {
+                trMenu.click(); await sleep(500);
+                res = find(C.zh);
+            }
         }
+        res?.click();
 
-        subtitle.click();
-        await sleep(700);
-
-        const result = await selectChinese();
-        closeSettings();
-
-        toast(result ? "✅ " + result : "⚠️ 未找到中文");
-        lastVideo = videoId;
+        setBtn.click();
+        toast(res ? "✅ 已开启中文字幕" : "⚠️ 未找到中文选项");
+        running = false;
     }
 
-    // 监听 YouTube 无刷新切换视频
     setInterval(() => {
         const id = new URLSearchParams(location.search).get("v");
-        if (id && id !== lastVideo) {
-            run();
-        }
-    }, 1500);
+        if (id && id !== last) run();
+    }, 1000);
+
+    if (location.pathname === "/watch") setTimeout(run, 1500);
 })();
