@@ -1,7 +1,7 @@
 ## 🧰 油猴脚本列表
 
 ### aggregate-search.user.js — 🔍 聚合搜索
-Brave/DDG/Google 悬浮工具栏：支持引擎切换、自动翻页、深色模式、一键回顶。
+DDG/Google/Bing 悬浮工具栏：支持引擎切换、自动翻页、深色模式、一键回顶、拖拽记忆与 ESC 快捷隐藏。
 
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/refs/heads/main/aggregate-search.user.js)
 
