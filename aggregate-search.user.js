@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         🔍 聚合搜索
-// @description  DDG/Google/Bing 轻量极速聚合搜索工具栏：精简稳定、自动翻页、防反爬优化、拖拽记忆与 ESC 快捷隐藏。
+// @description  DDG/Google/Bing 搜索；自动翻页、一键置顶、夜间模式、拖拽记忆与 ESC 快捷隐藏。
 // @version      2.0.0
 // @author       jbaoyin
 // @namespace    https://github.com/jbaoyin/userscripts
