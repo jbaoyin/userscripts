@@ -11,11 +11,8 @@ DDG/Google/Bing 悬浮工具栏：支持引擎切换、自动翻页、深色模�
 安装：[点击安装](https://github.com/jbaoyin/userscripts/raw/main/youtube-auto-subtitles.user.js)
 ## 使用说明
 
-需先安装浏览器扩展，任选其一：
-
-- [篡改猴 Tampermonkey](https://www.tampermonkey.net/)
-- [脚本猫 ScriptCat](https://docs.scriptcat.org/)
-
+需先安装浏览器扩展：
+- [Violentmonkey](https://violentmonkey.github.io/)
 安装好扩展后，点击上方"安装"链接即可自动识别并添加脚本。
 
 ## License
